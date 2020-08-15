@@ -153,10 +153,10 @@ if __name__ == '__main__':
     if args.spectral_norm: add_spectral_norm(model)
     set_cnf_options(args, model)
     print(type(model))
-
-
+    PATH = '/content/ff/kenshiro_flow/checkpt.pth'
+    model.load_state_dict(torch.load(PATH))
+    model.eval()
     save_traj_dir = os.path.join(args.save, 'trajectory')
-    logger.info('Plotting trajectory to {}'.format(save_traj_dir))
     data_samples = sample_data(args.data, batch_size=2000)
     save_trajectory(model, data_samples, save_traj_dir, device=device)
     trajectory_to_video(save_traj_dir)
