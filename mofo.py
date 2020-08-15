@@ -154,7 +154,8 @@ if __name__ == '__main__':
     set_cnf_options(args, model)
     print(type(model))
     PATH = '/content/ff/kenshiro_flow/checkpt.pth'
-    model.load_state_dict(torch.load(PATH))
+    checkpoint = torch.load(PATH)
+    model.load_state_dict(checkpoint['state_dict'])
     model.eval()
     save_traj_dir = os.path.join(args.save, 'trajectory')
     data_samples = sample_data(args.data, batch_size=2000)
