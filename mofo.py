@@ -153,8 +153,7 @@ if __name__ == '__main__':
     if args.spectral_norm: add_spectral_norm(model)
     set_cnf_options(args, model)
 
-    logger.info(model)
-    logger.info("Number of trainable parameters: {}".format(count_parameters(model)))
+    
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
 
