@@ -152,12 +152,102 @@ if __name__ == '__main__':
     model = build_model_tabular(args, 2, regularization_fns).to(device)
     if args.spectral_norm: add_spectral_norm(model)
     set_cnf_options(args, model)
-    print(type(model))
-    PATH = '/content/ff/kenshiro_flow/checkpt.pth'
-    checkpoint = torch.load(PATH)
-    model.load_state_dict(checkpoint['state_dict'])
-    model.eval()
+
+    logger.info(model)
+    logger.info("Number of trainable parameters: {}".format(count_parameters(model)))
+
+    optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
+
+    time_meter = utils.RunningAverageMeter(0.93)
+    loss_meter = utils.RunningAverageMeter(0.93)
+    nfef_meter = utils.RunningAverageMeter(0.93)
+    nfeb_meter = utils.RunningAverageMeter(0.93)
+    tt_meter = utils.RunningAverageMeter(0.93)
+
+    end = time.time()
+    best_loss = float('inf')
+    model.train()
+    for itr in range(1, args.niters + 1):
+        optimizer.zero_grad()
+        if args.spectral_norm: spectral_norm_power_iteration(model, 1)
+
+        loss = compute_loss(args, model)
+        loss_meter.update(loss.item())
+
+        if len(regularization_coeffs) > 0:
+            reg_states = get_regularization(model, regularization_coeffs)
+            reg_loss = sum(
+                reg_state * coeff for reg_state, coeff in zip(reg_states, regularization_coeffs) if coeff != 0
+            )
+            loss = loss + reg_loss
+
+        total_time = count_total_time(model)
+        nfe_forward = count_nfe(model)
+
+        loss.backward()
+        optimizer.step()
+
+        nfe_total = count_nfe(model)
+        nfe_backward = nfe_total - nfe_forward
+        nfef_meter.update(nfe_forward)
+        nfeb_meter.update(nfe_backward)
+
+        time_meter.update(time.time() - end)
+        tt_meter.update(total_time)
+
+        log_message = (
+            'Iter {:04d} | Time {:.4f}({:.4f}) | Loss {:.6f}({:.6f}) | NFE Forward {:.0f}({:.1f})'
+            ' | NFE Backward {:.0f}({:.1f}) | CNF Time {:.4f}({:.4f})'.format(
+                itr, time_meter.val, time_meter.avg, loss_meter.val, loss_meter.avg, nfef_meter.val, nfef_meter.avg,
+                nfeb_meter.val, nfeb_meter.avg, tt_meter.val, tt_meter.avg
+            )
+        )
+        if len(regularization_coeffs) > 0:
+            log_message = append_regularization_to_log(log_message, regularization_fns, reg_states)
+
+        logger.info(log_message)
+
+        if itr % args.val_freq == 0 or itr == args.niters:
+            with torch.no_grad():
+                model.eval()
+                test_loss = compute_loss(args, model, batch_size=args.test_batch_size)
+                test_nfe = count_nfe(model)
+                log_message = '[TEST] Iter {:04d} | Test Loss {:.6f} | NFE {:.0f}'.format(itr, test_loss, test_nfe)
+                logger.info(log_message)
+
+                if test_loss.item() < best_loss:
+                    best_loss = test_loss.item()
+                    utils.makedirs(args.save)
+                    torch.save({
+                        'args': args,
+                        'state_dict': model.state_dict(),
+                    }, os.path.join(args.save, 'checkpt.pth'))
+                model.train()
+
+        if itr % args.viz_freq == 0:
+            with torch.no_grad():
+                model.eval()
+                p_samples = sample_data(args.data, batch_size=2000)
+
+                sample_fn, density_fn = get_transforms(model)
+
+                plt.figure(figsize=(9, 3))
+                visualize_transform(
+                    p_samples, torch.randn, standard_normal_logprob, transform=sample_fn, inverse_transform=density_fn,
+                    samples=True, npts=800, device=device
+                )
+                fig_filename = os.path.join(args.save, 'figs', '{:04d}.jpg'.format(itr))
+                utils.makedirs(os.path.dirname(fig_filename))
+                plt.savefig(fig_filename)
+                plt.close()
+                model.train()
+
+        end = time.time()
+
+    logger.info('Training has finished.')
+
     save_traj_dir = os.path.join(args.save, 'trajectory')
+    logger.info('Plotting trajectory to {}'.format(save_traj_dir))
     data_samples = sample_data(args.data, batch_size=2000)
     save_trajectory(model, data_samples, save_traj_dir, device=device)
     trajectory_to_video(save_traj_dir)
